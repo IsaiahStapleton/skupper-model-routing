@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  generateName: model-routing-probe-
+  namespace: {{ cluster_namespace }}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: probe
+      image: {{ probe_image | to_json }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      command: [sh, -c]
+      args:
+        - >-
+          code=$(curl --silent --show-error --output /dev/null --max-time 30 --write-out '%{http_code}' "$1") || exit 1;
+          echo "HTTP $code";
+          case "$code" in 200|401|403) exit 0 ;; *) exit 1 ;; esac
+        - probe
+        - {{ ('http://' + service_name + ':' + (service_port | string) + probe_path) | to_json }}

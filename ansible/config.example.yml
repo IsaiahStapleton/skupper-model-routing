@@ -1,0 +1,20 @@
+---
+# Exact output of: oc whoami --show-server
+cluster_api: https://api.example.openshift.com:6443
+# Create a dedicated, empty namespace before running up.yml.
+cluster_namespace: model-routing
+# Existing model endpoint reachable FROM the Linux Docker host.
+# Linux Skupper Docker sites use host networking, so loopback is supported.
+model_host: 127.0.0.1
+model_port: 4000
+service_name: remote-models
+service_port: 4000
+# LiteLLM: /health/liveliness; OpenAI-compatible model servers: /v1/models
+probe_path: /v1/models
+# Set false if a cluster administrator already installed a watching controller.
+manage_controller: true
+# skupper must be installed on both the control machine and remote host.
+local_skupper_bin: skupper
+remote_skupper_bin: skupper
+# Dedicated Skupper namespace on the Docker host; do not use an existing site.
+remote_namespace: skupper-model-routing

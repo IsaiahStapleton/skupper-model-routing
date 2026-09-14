@@ -1,0 +1,88 @@
+---
+- name: Configure the dedicated Docker site
+  delegate_to: "{{ groups['model_hosts'][0] }}"
+  block:
+    - name: Ensure the private namespace directory exists
+      ansible.builtin.file:
+        path: "{{ remote_state_dir }}/input/resources"
+        state: directory
+        mode: '0700'
+    - name: Record the cluster owning this remote namespace
+      ansible.builtin.copy:
+        content: "{{ remote_owner }}
+"
+        dest: "{{ remote_state_dir }}/.skupper-model-routing-owner"
+        mode: '0600'
+    - name: Prepare Docker system infrastructure
+      ansible.builtin.command:
+        argv: ["{{ remote_skupper_bin }}", system, install, -p, docker, --reload-type, manual]
+      changed_when: false
+    - name: Render the remote Site and Connector
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ remote_state_dir }}/input/resources/{{ item.dest }}"
+        mode: '0600'
+      loop:
+        - {src: remote-site.yaml.j2, dest: Site-model-host.yaml}
+        - {src: connector.yaml.j2, dest: Connector-model.yaml}
+    - name: Start the remote router
+      ansible.builtin.command:
+        argv: ["{{ remote_skupper_bin }}", system, start, -p, docker, -n, "{{ remote_namespace }}"]
+      register: start_result
+      changed_when: start_result.rc == 0
+      failed_when: start_result.rc != 0 and 'already' not in (start_result.stdout + start_result.stderr)
+
+- name: Create a private temporary directory for the link token
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: skupper-model-routing-
+  register: token_dir
+
+- name: Establish a fresh link and remove temporary credentials
+  block:
+    - name: Issue a single-use link token
+      ansible.builtin.command:
+        argv: ["{{ local_skupper_bin }}", token, issue, "{{ token_dir.path }}/token.yaml", -p, kubernetes, -n, "{{ cluster_namespace }}", --expiration-window, 1h, --redemptions-allowed, '1']
+      no_log: true
+      changed_when: true
+    - name: Copy token to the remote namespace
+      ansible.builtin.copy:
+        src: "{{ token_dir.path }}/token.yaml"
+        dest: "{{ remote_state_dir }}/.link-token.yaml"
+        mode: '0600'
+      delegate_to: "{{ groups['model_hosts'][0] }}"
+      no_log: true
+    - name: Find old link inputs in our owned namespace
+      ansible.builtin.find:
+        paths: "{{ remote_state_dir }}/input/resources"
+        patterns: ['Link-*.yaml', 'Secret-*.yaml']
+      delegate_to: "{{ groups['model_hosts'][0] }}"
+      register: old_links
+    - name: Remove old link inputs before replacement
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_links.files }}"
+      delegate_to: "{{ groups['model_hosts'][0] }}"
+      no_log: true
+    - name: Redeem the token from the remote host
+      ansible.builtin.command:
+        argv: ["{{ remote_skupper_bin }}", token, redeem, "{{ remote_state_dir }}/.link-token.yaml", -p, docker, -n, "{{ remote_namespace }}", --timeout, 2m]
+      delegate_to: "{{ groups['model_hosts'][0] }}"
+      no_log: true
+      changed_when: true
+    - name: Reload the router to activate the link
+      ansible.builtin.command:
+        argv: ["{{ remote_skupper_bin }}", system, reload, -p, docker, -n, "{{ remote_namespace }}"]
+      delegate_to: "{{ groups['model_hosts'][0] }}"
+      changed_when: true
+  always:
+    - name: Remove the control-machine token directory
+      ansible.builtin.file:
+        path: "{{ token_dir.path }}"
+        state: absent
+    - name: Remove the remote token file
+      ansible.builtin.file:
+        path: "{{ remote_state_dir }}/.link-token.yaml"
+        state: absent
+      delegate_to: "{{ groups['model_hosts'][0] }}"

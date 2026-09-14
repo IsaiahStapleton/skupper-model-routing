@@ -1,0 +1,10 @@
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: {{ service_name }}
+  namespace: {{ remote_namespace }}
+spec:
+  host: {{ model_host | to_json }}
+  port: {{ model_port }}
+  routingKey: {{ service_name }}
+  type: tcp

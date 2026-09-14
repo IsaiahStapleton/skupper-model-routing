@@ -1,0 +1,14 @@
+---
+- name: Delete the named Listener and Site
+  ansible.builtin.command:
+    argv: [oc, delete, "listener/{{ service_name }}", "site/{{ cluster_site }}", -n, "{{ cluster_namespace }}", --ignore-not-found, --wait=true, --timeout=180s]
+  register: deleted_site
+  changed_when: "'deleted' in deleted_site.stdout"
+
+- name: Remove the managed controller resources
+  ansible.builtin.command:
+    argv: [oc, delete, -n, "{{ cluster_namespace }}", -f, '-', --ignore-not-found]
+    stdin: "{{ lookup('ansible.builtin.template', 'templates/controller.yaml.j2') }}"
+  register: deleted_controller
+  changed_when: "'deleted' in deleted_controller.stdout"
+  when: manage_controller | bool

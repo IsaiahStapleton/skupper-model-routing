@@ -1,0 +1,37 @@
+---
+- name: Wait for the remote site to join the cluster site
+  ansible.builtin.command:
+    argv: [oc, get, site, "{{ cluster_site }}", -n, "{{ cluster_namespace }}", '-o=jsonpath={.status.sitesInNetwork}']
+  register: network_sites
+  changed_when: false
+  retries: 18
+  delay: 10
+  until: network_sites.stdout | int >= 2
+
+- name: Create a uniquely named HTTP probe pod
+  ansible.builtin.command:
+    argv: [oc, create, -n, "{{ cluster_namespace }}", -f, '-', -o, name]
+    stdin: "{{ lookup('ansible.builtin.template', 'templates/probe.yaml.j2') }}"
+  register: probe_pod
+  changed_when: true
+
+- name: Wait for and report the probe result
+  block:
+    - name: Wait for a successful HTTP connectivity probe
+      ansible.builtin.command:
+        argv: [oc, wait, "{{ probe_pod.stdout | trim }}", -n, "{{ cluster_namespace }}", '--for=jsonpath={.status.phase}=Succeeded', --timeout=120s]
+      changed_when: false
+  always:
+    - name: Read probe output
+      ansible.builtin.command:
+        argv: [oc, logs, "{{ probe_pod.stdout | trim }}", -n, "{{ cluster_namespace }}"]
+      register: probe_logs
+      changed_when: false
+      failed_when: false
+    - name: Display HTTP probe status
+      ansible.builtin.debug:
+        var: probe_logs.stdout
+    - name: Remove only this run's probe pod
+      ansible.builtin.command:
+        argv: [oc, delete, "{{ probe_pod.stdout | trim }}", -n, "{{ cluster_namespace }}", --ignore-not-found, --wait=false]
+      changed_when: true

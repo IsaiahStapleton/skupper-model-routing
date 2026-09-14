@@ -1,0 +1,26 @@
+---
+- name: Apply the namespace-scoped controller when requested
+  ansible.builtin.command:
+    argv: [oc, apply, -n, "{{ cluster_namespace }}", -f, '-']
+    stdin: "{{ lookup('ansible.builtin.template', 'templates/controller.yaml.j2') }}"
+  register: controller_apply
+  changed_when: "'created' in controller_apply.stdout or 'configured' in controller_apply.stdout"
+  when: manage_controller | bool
+
+- name: Wait for the managed controller
+  ansible.builtin.command:
+    argv: [oc, rollout, status, deployment/skupper-controller, -n, "{{ cluster_namespace }}", --timeout=180s]
+  changed_when: false
+  when: manage_controller | bool
+
+- name: Apply the cluster Site and Listener
+  ansible.builtin.command:
+    argv: [oc, apply, -n, "{{ cluster_namespace }}", -f, '-']
+    stdin: "{{ lookup('ansible.builtin.template', 'templates/cluster.yaml.j2') }}"
+  register: site_apply
+  changed_when: "'created' in site_apply.stdout or 'configured' in site_apply.stdout"
+
+- name: Wait for the cluster site
+  ansible.builtin.command:
+    argv: [oc, wait, "site/{{ cluster_site }}", -n, "{{ cluster_namespace }}", --for=condition=Ready, --timeout=300s]
+  changed_when: false

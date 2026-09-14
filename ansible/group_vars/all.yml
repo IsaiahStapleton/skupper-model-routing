@@ -1,0 +1,13 @@
+---
+cluster_site: model-cluster
+remote_site: model-host
+remote_namespace: skupper-model-routing
+local_skupper_bin: skupper
+remote_skupper_bin: skupper
+manage_controller: true
+service_name: remote-models
+service_port: 4000
+model_host: 127.0.0.1
+model_port: 4000
+probe_path: /v1/models
+probe_image: docker.io/curlimages/curl:8.12.1

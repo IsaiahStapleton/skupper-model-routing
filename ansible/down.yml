@@ -1,0 +1,14 @@
+---
+- name: Remove this repository's Skupper connection
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [config.yml]
+  tasks:
+    - name: Validate both targets before deleting anything
+      ansible.builtin.import_tasks: tasks/preflight.yml
+    - name: Remove the remote site
+      ansible.builtin.import_tasks: tasks/remote-down.yml
+    - name: Remove cluster resources
+      ansible.builtin.import_tasks: tasks/cluster-down.yml

@@ -1,0 +1,10 @@
+ansible/config.yml
+ansible/inventory.ini
+ansible/.vault-pass
+.env
+*.retry
+*.pem
+*.key
+*link-token*
+__pycache__/
+.venv/

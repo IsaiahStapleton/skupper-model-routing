@@ -1,0 +1,11 @@
+---
+- name: Verify remote model connectivity
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files: [config.yml]
+  tasks:
+    - name: Validate target and ownership
+      ansible.builtin.import_tasks: tasks/preflight.yml
+    - name: Verify connectivity from a cluster pod
+      ansible.builtin.import_tasks: tasks/verify.yml

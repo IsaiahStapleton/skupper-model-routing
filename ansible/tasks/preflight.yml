@@ -1,0 +1,135 @@
+---
+- name: Require explicit targets and a single remote host
+  ansible.builtin.assert:
+    that:
+      - not ansible_check_mode
+      - groups.get('model_hosts', []) | length == 1
+      - cluster_api is defined
+      - cluster_namespace is defined
+      - cluster_api is match('^https://')
+      - cluster_namespace is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - remote_namespace is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - remote_namespace != 'default'
+      - service_name is match('^[a-z]([-a-z0-9]*[a-z0-9])?$')
+      - model_port | int > 0 and model_port | int < 65536
+      - service_port | int > 0 and service_port | int < 65536
+      - probe_path is match('^/[^\s]*$')
+    fail_msg: Configure config.yml and one model_hosts inventory entry. Check mode is unsupported; use --syntax-check.
+
+- name: Read the active OpenShift API
+  ansible.builtin.command:
+    argv: [oc, whoami, --show-server]
+  register: active_api
+  changed_when: false
+
+- name: Reject the wrong cluster
+  ansible.builtin.assert:
+    that: active_api.stdout | trim == cluster_api
+    fail_msg: The active oc cluster does not exactly match cluster_api.
+
+- name: Require the namespace and Skupper v2 CRDs
+  ansible.builtin.command:
+    argv: [oc, get, "{{ item }}", -o, name]
+  loop:
+    - "namespace/{{ cluster_namespace }}"
+    - crd/sites.skupper.io
+    - crd/listeners.skupper.io
+    - crd/connectors.skupper.io
+    - crd/accessgrants.skupper.io
+  changed_when: false
+
+- name: Read existing sites in the target namespace
+  ansible.builtin.command:
+    argv: [oc, get, sites, -n, "{{ cluster_namespace }}", -o, json]
+  register: existing_sites
+  changed_when: false
+
+- name: Refuse to adopt an unrelated site
+  ansible.builtin.assert:
+    that:
+      - item.metadata.name == cluster_site
+      - item.metadata.get('labels', {}).get('app.kubernetes.io/managed-by', '') == 'skupper-model-routing'
+    fail_msg: Use a dedicated namespace; an unrelated Skupper site already exists here.
+  loop: "{{ (existing_sites.stdout | from_json)['items'] }}"
+
+- name: Read existing listener and controller
+  ansible.builtin.command:
+    argv: [oc, get, "{{ item }}", -n, "{{ cluster_namespace }}", --ignore-not-found, -o, json]
+  loop:
+    - "listener/{{ service_name }}"
+    - deployment/skupper-controller
+  register: existing_objects
+  changed_when: false
+
+- name: Refuse to modify resources owned elsewhere
+  ansible.builtin.assert:
+    that: (item.stdout | from_json).metadata.get('labels', {}).get('app.kubernetes.io/managed-by', '') == 'skupper-model-routing'
+    fail_msg: An existing resource is not managed by this repository. Use a dedicated namespace or manage_controller=false for an existing controller.
+  loop: "{{ existing_objects.results }}"
+  when:
+    - item.stdout | trim | length > 0
+    - item.item != 'deployment/skupper-controller' or manage_controller | bool
+
+- name: Read the local Skupper version
+  ansible.builtin.command:
+    argv: ["{{ local_skupper_bin }}", version]
+  register: local_version
+  changed_when: false
+
+- name: Collect remote environment
+  ansible.builtin.setup:
+    gather_subset: ['!all', '!min', env]
+  delegate_to: "{{ groups['model_hosts'][0] }}"
+  register: remote_environment
+
+- name: Set isolated remote state paths
+  ansible.builtin.set_fact:
+    remote_state_dir: "{{ remote_environment.ansible_facts.ansible_env.get('XDG_DATA_HOME', remote_environment.ansible_facts.ansible_env.HOME + '/.local/share') }}/skupper/namespaces/{{ remote_namespace }}"
+    remote_owner: "{{ cluster_api }}|{{ cluster_namespace }}|{{ cluster_site }}"
+
+- name: Read the remote Skupper version
+  ansible.builtin.command:
+    argv: ["{{ remote_skupper_bin }}", version]
+  delegate_to: "{{ groups['model_hosts'][0] }}"
+  register: remote_version
+  changed_when: false
+
+- name: Require the extracted workflow's Skupper version
+  ansible.builtin.assert:
+    that:
+      - local_version.stdout is search('(?<![0-9])2\.2\.1(?![0-9])')
+      - remote_version.stdout is search('(?<![0-9])2\.2\.1(?![0-9])')
+    fail_msg: Install upstream Skupper CLI 2.2.1 on both machines; this workflow and controller are pinned to that version.
+
+- name: Check Docker access as the SSH user
+  ansible.builtin.command:
+    argv: [docker, info]
+  delegate_to: "{{ groups['model_hosts'][0] }}"
+  changed_when: false
+
+- name: Inspect remote namespace and ownership marker
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ remote_state_dir }}"
+    - "{{ remote_state_dir }}/.skupper-model-routing-owner"
+  delegate_to: "{{ groups['model_hosts'][0] }}"
+  register: remote_state
+
+- name: Reject an existing unowned remote namespace
+  ansible.builtin.assert:
+    that: not remote_state.results[0].stat.exists or remote_state.results[1].stat.exists
+    fail_msg: The remote Skupper namespace already exists without our ownership marker. Choose a new remote_namespace.
+
+- name: Read the remote ownership marker
+  ansible.builtin.slurp:
+    src: "{{ remote_state_dir }}/.skupper-model-routing-owner"
+  delegate_to: "{{ groups['model_hosts'][0] }}"
+  register: owner_marker
+  when: remote_state.results[1].stat.exists
+
+- name: Reject a remote namespace linked to a different target
+  ansible.builtin.assert:
+    that: owner_marker.content | b64decode | trim == remote_owner
+    fail_msg: Tear down with the original config before changing the cluster target.
+  when: remote_state.results[1].stat.exists

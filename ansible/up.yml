@@ -1,0 +1,22 @@
+---
+- name: Connect an existing remote model endpoint to OpenShift
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [config.yml]
+  tasks:
+    - name: Validate configuration and ownership before changes
+      ansible.builtin.import_tasks: tasks/preflight.yml
+    - name: Check the model TCP port from its host
+      ansible.builtin.wait_for:
+        host: "{{ model_host }}"
+        port: "{{ model_port }}"
+        timeout: 15
+      delegate_to: "{{ groups['model_hosts'][0] }}"
+    - name: Configure the cluster site
+      ansible.builtin.import_tasks: tasks/cluster-up.yml
+    - name: Configure the remote site and link
+      ansible.builtin.import_tasks: tasks/remote-up.yml
+    - name: Verify connectivity from a cluster pod
+      ansible.builtin.import_tasks: tasks/verify.yml

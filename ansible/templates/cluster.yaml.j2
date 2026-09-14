@@ -1,0 +1,22 @@
+apiVersion: skupper.io/v2alpha1
+kind: Site
+metadata:
+  name: {{ cluster_site }}
+  namespace: {{ cluster_namespace }}
+  labels:
+    app.kubernetes.io/managed-by: skupper-model-routing
+spec:
+  linkAccess: default
+---
+apiVersion: skupper.io/v2alpha1
+kind: Listener
+metadata:
+  name: {{ service_name }}
+  namespace: {{ cluster_namespace }}
+  labels:
+    app.kubernetes.io/managed-by: skupper-model-routing
+spec:
+  host: {{ service_name }}
+  port: {{ service_port }}
+  routingKey: {{ service_name }}
+  type: tcp
